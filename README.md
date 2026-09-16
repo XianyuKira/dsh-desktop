@@ -12,13 +12,76 @@
 
 关闭窗口 = 结束本次 dsh 服务（进程树一并回收，不留残留）。
 
-## 快速开始
+## 安装（给第一次用的人）
 
-1. 双击桌面上的 **「DeepSeek Harness」**。
-2. 首次启动约 5–10 秒（要等 dsh 把插件树加载完），会显示"正在启动 dsh 服务…"。
-3. 之后就是完整的 Harness 界面：会话、工作区、设置、插件，全都在窗口内。
+本仓库是**源码**，不含编译好的 exe。有两种用法：自己构建，或直接用别人构建好的。
 
-保持原有的 `dsh web`（比如你已经在 Edge 里开着的那个）不受影响，两者可以同时存在。
+这个启动器**本身不是 Harness** —— 它只是给 dsh 换了个窗口。所以前提是 dsh 能正常跑起来。
+
+### 第 0 步：Windows 版本要求
+
+只支持 **Windows 10 / 11**。程序是 WinForms + 内嵌 WebView2，没有跨平台计划。
+
+### 第 1 步：装 Node.js 和 dsh
+
+```powershell
+# 装 Node.js（>= 20）：https://nodejs.org  或  winget install OpenJS.NodeJS.LTS
+
+npm i -g @deepseek-ai/dsh
+dsh --version          # 能打印版本号就说明 dsh 可用了
+```
+
+### 第 2 步：让 dsh 能连上模型
+
+dsh 首次使用需要配置模型凭据（DeepSeek API Key）。两种方式，选一种：
+
+```powershell
+# 方式 A：环境变量
+setx DEEPSEEK_API_KEY "sk-你的key"     # 之后重开一个终端
+
+# 方式 B：先直接跑一次 dsh web，在界面里登录/填 key
+dsh web
+```
+
+> 凭据存在 `%USERPROFILE%\.dsh\.credentials.yaml`，跟本启动器无关，也不会进本仓库。
+
+### 第 3 步：拿到本启动器
+
+```powershell
+git clone https://github.com/XianyuKira/dsh-desktop.git
+cd dsh-desktop
+```
+
+### 第 4 步：构建
+
+```powershell
+.\build.ps1
+```
+
+这个脚本会：生成图标 → 发布程序到 `app\` → 在桌面创建快捷方式。
+
+构建需要 [.NET SDK 8 或更高](https://dotnet.microsoft.com/download)。如果 PowerShell 拒绝执行脚本，先运行：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+```
+
+### 第 5 步：运行
+
+双击桌面上的 **「DeepSeek Harness」**，或直接运行 `app\DeepSeekHarness.exe`。
+
+### 前置条件一览
+
+| 组件 | 要求 | 说明 |
+| --- | --- | --- |
+| 操作系统 | Windows 10 / 11 | 仅此 |
+| .NET 桌面运行时 | 8.0 或更高 | 运行程序需要；装了 .NET SDK 就自带了 |
+| Edge WebView2 运行时 | 任意较新版本 | Win11 及多数 Win10 已自带，[下载](https://go.microsoft.com/fwlink/p/?LinkId=2124703) |
+| Node.js | 20 或更高 | 用来跑 dsh |
+| `@deepseek-ai/dsh` | 全局安装 | 启动器会自动定位，无需配置路径 |
+| DeepSeek API Key | 自备 | 配在 dsh 里，不是配在本启动器里 |
+
+启动器会在这些位置找 dsh：全局 npm 目录 → `Program Files\nodejs` → `NODE_PATH` → 从程序目录向上找 `node_modules` → PATH 上的 `dsh.cmd`。都找不到时，窗口里会直接告诉你缺什么。
 
 ## 界面上的操作
 
@@ -67,27 +130,19 @@ DeepSeekHarness.exe [选项]
 }
 ```
 
-## 依赖
+## 项目结构
 
-| 依赖 | 说明 |
-| --- | --- |
-| .NET 8 桌面运行时 | 本机已装（`Microsoft.WindowsDesktop.App 8.0.x`） |
-| Microsoft Edge WebView2 运行时 | 本机已装（Win10/11 通常自带） |
-| Node.js + `@deepseek-ai/dsh` | 即你原本在用的 dsh，启动器会自动定位 |
-
-启动器会依次尝试：全局 npm 目录 → `Program Files\nodejs` → `NODE_PATH` → 从程序目录向上找 `node_modules`；
-都找不到才回退到 PATH 上的 `dsh.cmd`。找不到时窗口里会给出明确提示。
-
-## 自行构建
-
-```powershell
-cd <本仓库目录>
-.\build.ps1          # 生成图标 → 发布到 app\ → 创建桌面快捷方式
 ```
-
-- 源码：`src\`（`Program.cs` 入口、`MainForm.cs` 窗口、`DshServer.cs` 子进程与进程看守、`AppConfig.cs` 设置）
-- 图标：`tools\IconMaker\` 用 .NET 现画的多尺寸 `.ico`，仓库里不含二进制美术资源
-- 验收：`.\verify-selftest.ps1` 离屏跑一遍真实流程并输出报告
+build.ps1              一键构建：生成图标 → 发布到 app\ → 创建桌面快捷方式
+verify-selftest.ps1    离屏端到端自检：真跑一遍 dsh + WebView2 并输出报告
+src\
+  Program.cs           入口、命令行参数、WebView2 运行时检查
+  MainForm.cs          窗口：工具条、日志面板、加载态、缩放、菜单
+  DshServer.cs         子进程管理、token URL 解析、Job Object 进程看守
+  AppConfig.cs         settings.json 读写、端口与工作目录
+  app.ico              构建时生成，不纳入版本控制
+tools\IconMaker\       用 .NET 现画多尺寸 .ico，仓库里不含二进制美术资源
+```
 
 ## 排查
 
