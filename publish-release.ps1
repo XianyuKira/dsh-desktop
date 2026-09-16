@@ -11,8 +11,23 @@ $version = [regex]::Match($csprojText, '<Version>([^<]+)</Version>').Groups[1].V
 $tag = "v$version"
 Write-Host "version: $version  tag: $tag"
 
-$cred = "protocol=https`nhost=github.com`n`n" | git credential fill 2>$null
-$token = ($cred | Where-Object { $_ -match '^password=' }) -replace '^password=', ''
+# Git Credential Manager reads its query from stdin and wants a terminating blank line.
+# Writing to the child's StandardInput proved unreliable here (git answers "missing protocol
+# field"), so the query goes to a temp file and cmd performs the redirection, which works.
+$queryFile = Join-Path $env:TEMP ("gcm-query-" + [guid]::NewGuid().ToString('N').Substring(0, 8) + ".txt")
+[System.IO.File]::WriteAllText($queryFile, "protocol=https`nhost=github.com`n`n", (New-Object System.Text.UTF8Encoding($false)))
+
+$token = $null
+try {
+    $out = cmd.exe /c "git credential fill < `"$queryFile`"" 2>&1 | Out-String
+    foreach ($line in ($out -split "`n")) {
+        $trimmed = $line.Trim()
+        if ($trimmed.StartsWith('password=')) { $token = $trimmed.Substring('password='.Length).Trim() }
+    }
+}
+finally {
+    Remove-Item $queryFile -Force -ErrorAction SilentlyContinue
+}
 if (-not $token) { throw 'no GitHub credential available from GCM' }
 $headers = @{
     Authorization          = "Bearer $token"
@@ -25,20 +40,36 @@ function Redact([string]$t) { if ($t) { $t.Replace($token, '***') } else { $t } 
 $sums = Get-Content (Join-Path $PSScriptRoot 'artifacts\release\SHA256SUMS.txt') -Raw
 
 $notes = @"
-修掉一个会让「检查更新」莫名失败的缺陷。
+新增：**状态栏常驻显示插件市场状态**。不用再进「设置 → 插件市场」才能知道有没有插件该更新。
 
-## 修了什么
+## 状态栏显示什么
 
-GitHub 对**未认证**的 API 请求按 **IP** 限每小时 60 次，同 IP 所有人共用这一份。
-配额一耗尽，「检查更新」就失败，而原来的提示是"连不上 GitHub"——把用户引向完全错误的排查方向。
+| 显示 | 含义 |
+| --- | --- |
+| ``插件市场 1.47.0 · 8 个插件`` | 正常，插件都是最新 |
+| ``插件市场：2 个插件可更新`` | **有插件可以更新**（橙色） |
+| ``插件市场：正在安装 xxx 1/3`` | 市场正在安装/更新中 |
+| ``插件市场：未启用`` | 这个 profile 没装 ``dshmarket`` |
 
-现在：
+- **鼠标悬停**看明细：哪几个插件、从哪个版本升到哪个版本
+- **点一下**打开插件市场
 
-- 程序会复用 **Git Credential Manager 里已授权的凭据**（就是 ``git push`` 时授权过的那份），
-  配额从 **60 次/小时（按 IP）** 变成 **5000 次/小时（按你的账号）**，不再被同 IP 的其它请求挤掉
-- 机器上没有该凭据时自动退回匿名请求，行为与之前一致
-- 遇到 403/429 时明确提示"配额已用尽"并给出恢复时间，不再误报成网络问题
-- ``--check-update`` 增加 ``auth`` 一行，一眼看出走的是匿名还是带凭据
+## 它怎么拿到这些
+
+读的是市场自带的**本地只读 API**（``/dsh-market/api/v1/capabilities``、``/dsh-market/status``、
+``/dsh-market/api/v1/updates?name=…``），不需要会话令牌，也不改动任何东西。
+
+刷新节奏分开：轻量状态每 8 秒读一次；完整更新扫描每 10 分钟一次（每个插件都可能去问一次
+仓库，问太勤不礼貌）。dsh 启动期间市场的路由还没挂上，这时会自动重试，不会误报成"未启用"。
+
+## 选哪个包
+
+| 包 | 大小 | 适用 |
+| --- | --- | --- |
+| ``dsh-desktop-$version-win-x64.zip`` | 0.7 MB | **推荐**。需要 .NET 8 桌面运行时 |
+| ``dsh-desktop-$version-win-x64-selfcontained.zip`` | 62 MB | 零依赖，已内嵌运行时 |
+
+已经在用 1.2.x 的话，直接「一键更新」即可，不用下载这两个包。
 
 ## 一键更新怎么工作
 

@@ -139,9 +139,7 @@ namespace DshDesktop
             log.AppendLine("outcome   " + (result.Succeeded
                 ? (result.UpdateAvailable ? "update-available" : "up-to-date")
                 : "failed"));
-            log.AppendLine("auth      " + (GitHubCredential.Available
-                ? "带凭据（5000 次/小时，按账号）"
-                : "匿名（60 次/小时，按 IP，容易被挤掉）"));
+            log.AppendLine("auth      " + GitHubCredential.Describe());
             if (!string.IsNullOrEmpty(result.ReleaseUrl)) log.AppendLine("release   " + result.ReleaseUrl);
             if (!string.IsNullOrEmpty(result.PublishedAt)) log.AppendLine("published " + result.PublishedAt);
             if (!string.IsNullOrEmpty(result.Message)) log.AppendLine("detail    " + result.Message);
