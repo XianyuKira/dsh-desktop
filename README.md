@@ -172,6 +172,7 @@ DeepSeekHarness.exe [选项]
 build.ps1              一键构建：生成图标 → 发布到 app\ → 创建桌面快捷方式
 verify-selftest.ps1    离屏端到端自检：真跑一遍 dsh + WebView2 并输出报告
 make-release.ps1       打发布包：框架依赖版 + 自包含版 zip，并算 SHA256
+publish-release.ps1    建 tag 并发 GitHub Release、上传附件（复用 GCM 凭据）
 src\
   Program.cs           入口、命令行参数、WebView2 运行时检查
   MainForm.cs          窗口：工具条、日志面板、加载态、缩放、菜单

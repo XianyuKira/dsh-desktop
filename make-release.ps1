@@ -1,4 +1,4 @@
-# Build release packages: framework-dependent zip + self-contained zip, plus SHA256SUMS.txt.
+﻿# Build release packages: framework-dependent zip + self-contained zip, plus SHA256SUMS.txt.
 # ASCII only on purpose: PowerShell 5.1 misreads UTF-8 without a BOM, and this script
 # must survive being edited by tools that drop the BOM.
 #

@@ -1,8 +1,10 @@
 # 仓库内统一用 LF 存储，检出时按平台转换。
 * text=auto
 
-# Windows 脚本用 CRLF，避免 PowerShell 5.1 解析问题
-*.ps1 text eol=crlf
+# PowerShell 脚本不做任何换行/内容归一化。
+# 这些脚本可能带 UTF-8 BOM（PowerShell 5.1 读中文需要），而归一化会把 BOM 抹掉，
+# 导致每编辑一次就多出一个"文件已改动"的假 diff。用 -text 彻底避开。
+*.ps1 -text
 
 # C# 与工程文件保持 LF
 *.cs    text eol=lf
@@ -15,3 +17,4 @@
 
 # 发布产物/生成物不参与 diff 统计
 app/** linguist-vendored
+
