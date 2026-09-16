@@ -3,6 +3,10 @@ bin/
 obj/
 app/
 publish/
+dist/
+
+# 发布打包产物（zip 通过 git add -f 加入，或直接走 Release 附件）
+artifacts/
 
 # 由 tools/IconMaker 在构建时生成的图标
 src/app.ico

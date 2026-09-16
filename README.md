@@ -45,14 +45,25 @@ dsh web
 
 > 凭据存在 `%USERPROFILE%\.dsh\.credentials.yaml`，跟本启动器无关，也不会进本仓库。
 
-### 第 3 步：拿到本启动器
+### 第 3 步：拿到本启动器（两条路，选一条）
+
+**路线 A：直接下载，不想编译 —— 推荐**
+
+到 [Releases](https://github.com/XianyuKira/dsh-desktop/releases/latest) 下载，然后跳到第 5 步：
+
+| 包 | 大小 | 适用 |
+| --- | --- | --- |
+| `dsh-desktop-<版本>-win-x64.zip` | 约 0.6 MB | 需要 .NET 8 桌面运行时（多数机器已有） |
+| `dsh-desktop-<版本>-win-x64-selfcontained.zip` | 约 58 MB | 零依赖，已内嵌运行时，解压双击即可 |
+
+**路线 B：clone 源码自己构建**
 
 ```powershell
 git clone https://github.com/XianyuKira/dsh-desktop.git
 cd dsh-desktop
 ```
 
-### 第 4 步：构建
+### 第 4 步：构建（走路线 A 的可以跳过）
 
 ```powershell
 .\build.ps1
@@ -68,14 +79,17 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 ### 第 5 步：运行
 
-双击桌面上的 **「DeepSeek Harness」**，或直接运行 `app\DeepSeekHarness.exe`。
+- 走**路线 B（自己构建）**：双击桌面上的 **「DeepSeek Harness」**，或运行 `app\DeepSeekHarness.exe`。
+- 走**路线 A（下载 zip）**：解压到任意目录，双击里面的 `DeepSeekHarness.exe`。
+
+首次运行 Windows 可能弹出 SmartScreen 警告（exe 没有代码签名），点「更多信息」→「仍要运行」即可。
 
 ### 前置条件一览
 
 | 组件 | 要求 | 说明 |
 | --- | --- | --- |
 | 操作系统 | Windows 10 / 11 | 仅此 |
-| .NET 桌面运行时 | 8.0 或更高 | 运行程序需要；装了 .NET SDK 就自带了 |
+| .NET 桌面运行时 | 8.0 或更高 | 仅框架依赖版需要；选了 selfcontained 包则无需 |
 | Edge WebView2 运行时 | 任意较新版本 | Win11 及多数 Win10 已自带，[下载](https://go.microsoft.com/fwlink/p/?LinkId=2124703) |
 | Node.js | 20 或更高 | 用来跑 dsh |
 | `@deepseek-ai/dsh` | 全局安装 | 启动器会自动定位，无需配置路径 |
@@ -135,6 +149,7 @@ DeepSeekHarness.exe [选项]
 ```
 build.ps1              一键构建：生成图标 → 发布到 app\ → 创建桌面快捷方式
 verify-selftest.ps1    离屏端到端自检：真跑一遍 dsh + WebView2 并输出报告
+make-release.ps1       打发布包：框架依赖版 + 自包含版 zip，并算 SHA256
 src\
   Program.cs           入口、命令行参数、WebView2 运行时检查
   MainForm.cs          窗口：工具条、日志面板、加载态、缩放、菜单
