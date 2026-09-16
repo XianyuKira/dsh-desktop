@@ -1,4 +1,4 @@
-# Build release packages: framework-dependent zip + self-contained zip, plus SHA256SUMS.txt.
+﻿# Build release packages: framework-dependent zip + self-contained zip, plus SHA256SUMS.txt.
 # ASCII only on purpose: PowerShell 5.1 misreads UTF-8 without a BOM, and this script
 # must survive being edited by tools that drop the BOM.
 #
@@ -115,11 +115,14 @@ Write-Host ("  {0:N2} MB -> {1}" -f ((Get-Item $zipA).Length / 1MB), (Split-Path
 Remove-Item $stage -Recurse -Force
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 Write-Host '=== 2. self-contained package ==='
-$scExe = Join-Path $scDir 'DeepSeekHarness.exe'
-if (-not (Test-Path $scExe)) {
-    throw "self-contained build not found in $scDir"
+# Copy the whole self-contained tree, not just one file: self-update needs the helper
+# next to the app, and a single-file build would hide it inside the bundle.
+foreach ($required in @('DeepSeekHarness.exe', 'DshDesktopUpdater.exe')) {
+    if (-not (Test-Path (Join-Path $scDir $required))) {
+        throw "$required is missing from $scDir; publish the self-contained build with the updater"
+    }
 }
-Copy-Item $scExe $stage -Force
+Copy-Item (Join-Path $scDir '*') $stage -Recurse -Force
 $readmeBig = $readme -replace '\[What this build needs\][\s\S]*?\[Notes\]', @"
 [What this build needs]
 - Windows 10 / 11
