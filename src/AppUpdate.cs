@@ -20,6 +20,9 @@ namespace DshDesktop
         public const string Repo = "dsh-desktop";
         public const string LatestReleaseApi = "https://api.github.com/repos/" + Owner + "/" + Repo + "/releases/latest";
 
+        /// <summary>Folder the helper was copied into during the last launch attempt.</summary>
+        public static string LastHelperDirectory { get; private set; }
+
         /// <summary>
         /// The package newer installs receive. The framework-dependent build needs the .NET
         /// desktop runtime, which this program already requires, so it is the safe small choice.
@@ -161,29 +164,55 @@ namespace DshDesktop
         /// Launches the helper that waits for this process to exit, copies the package over the
         /// install folder, and starts the program again. The helper must outlive this process, so
         /// it is started detached rather than as a child.
+        ///
+        /// The helper is copied as a whole folder, not as a bare .exe: its logic lives in
+        /// DshDesktopUpdater.Core.dll, and a lone executable dies at startup with
+        /// 0x8000809A before it can write a single log line.
         /// </summary>
         public static bool StartReplaceAndRestart(string zipPath, string installDirectory, int currentProcessId, out string error)
         {
             error = null;
             try
             {
-                var helper = Path.Combine(Path.GetTempPath(),
-                    "DshDesktopUpdater-" + Guid.NewGuid().ToString("N").Substring(0, 6) + ".exe");
-
                 var source = Path.Combine(InstallDirectory, "DshDesktopUpdater.exe");
                 if (!File.Exists(source))
                 {
                     error = "找不到更新助手 DshDesktopUpdater.exe，包可能不完整。";
                     return false;
                 }
-                File.Copy(source, helper, true);
+
+                var helperDirectory = Path.Combine(Path.GetTempPath(),
+                    "DshDesktopUpdater-" + Guid.NewGuid().ToString("N").Substring(0, 6));
+                Directory.CreateDirectory(helperDirectory);
+
+                // Everything the helper needs to start: the exe, its dependency manifest and the
+                // core library holding the swap logic.
+                foreach (var name in new[]
+                         {
+                             "DshDesktopUpdater.exe",
+                             "DshDesktopUpdater.dll",
+                             "DshDesktopUpdater.Core.dll",
+                             "DshDesktopUpdater.deps.json",
+                             "DshDesktopUpdater.runtimeconfig.json",
+                         })
+                {
+                    var from = Path.Combine(InstallDirectory, name);
+                    if (File.Exists(from)) File.Copy(from, Path.Combine(helperDirectory, name), true);
+                }
+
+                var helper = Path.Combine(helperDirectory, "DshDesktopUpdater.exe");
+                if (!File.Exists(helper))
+                {
+                    error = "更新助手复制失败。";
+                    return false;
+                }
 
                 var arguments = string.Join(" ", new[]
                 {
                     Quote(zipPath),
                     Quote(installDirectory),
                     currentProcessId.ToString(),
-                    Quote(Path.Combine(InstallDirectory, "DeepSeekHarness.exe")),
+                    Quote(Path.Combine(installDirectory, "DeepSeekHarness.exe")),
                 });
 
                 var startInfo = new ProcessStartInfo
@@ -192,7 +221,7 @@ namespace DshDesktop
                     Arguments = arguments,
                     UseShellExecute = true,     // detach: this helper must survive our exit
                     WindowStyle = ProcessWindowStyle.Hidden,
-                    WorkingDirectory = Path.GetTempPath(),
+                    WorkingDirectory = helperDirectory,
                 };
 
                 var process = Process.Start(startInfo);
@@ -201,6 +230,9 @@ namespace DshDesktop
                     error = "无法启动更新助手。";
                     return false;
                 }
+
+                // Tell the caller where it went, so a failure can be diagnosed without guessing.
+                LastHelperDirectory = helperDirectory;
                 return true;
             }
             catch (Exception ex)

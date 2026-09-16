@@ -61,6 +61,26 @@ if (-not (Test-Path (Join-Path $frameDir 'DshDesktopUpdater.exe'))) {
 }
 Write-Host '  update helper present'
 
+# Prove the helper actually runs before anyone downloads it. A lone updater exe once shipped
+# without its dependency dll and died at startup with 0x8000809A, which no library-level test
+# could catch. The helper's own --selftest launches a real process and swaps a real locked exe.
+Write-Host '  running the update helper self-test'
+$probeDir = Join-Path $env:TEMP ('updprobe-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+New-Item -ItemType Directory -Force -Path $probeDir | Out-Null
+Get-ChildItem $frameDir -File | Copy-Item -Destination $probeDir -Force
+try {
+    $probe = Start-Process -FilePath (Join-Path $probeDir 'DshDesktopUpdater.exe') -ArgumentList '--selftest' -PassThru -Wait
+    if ($probe.ExitCode -ne 0) {
+        $report = Join-Path $env:TEMP 'dsh-desktop-updater-selftest.log'
+        if (Test-Path $report) { Get-Content $report -Encoding UTF8 | ForEach-Object { Write-Host "    $_" } }
+        throw "the update helper self-test failed (exit $($probe.ExitCode)); refusing to package an updater that cannot update"
+    }
+    Write-Host '    helper self-test passed'
+}
+finally {
+    Remove-Item $probeDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 $stage = Join-Path $proj 'artifacts\stage'
 $outDir = Join-Path $proj 'artifacts\release'
 Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
