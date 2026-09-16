@@ -12,8 +12,8 @@
     <ApplicationIcon>..\..\src\app.ico</ApplicationIcon>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <Product>DeepSeek Harness 桌面版 更新助手</Product>
-    <Company>咕喵喵</Company>
-    <Version>1.2.0</Version>
+    <Company>贤余sama</Company>
+    <Version>1.2.1</Version>
     <DebugType>none</DebugType>
   </PropertyGroup>
 

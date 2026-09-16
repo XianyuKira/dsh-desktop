@@ -844,7 +844,7 @@ namespace DshDesktop
             text.AppendLine("工作目录：" + _config.ResolveWorkspace());
             text.AppendLine("配置目录：" + (_config.PortableData ? AppConfig.ExeDirectory : AppConfig.AppDataDirectory));
             text.AppendLine();
-            text.AppendLine("启动器由咕喵喵制作。");
+            text.AppendLine("启动器：贤余sama");
             MessageBox.Show(text.ToString(), "关于", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
