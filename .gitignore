@@ -38,3 +38,7 @@ prep-git.ps1
 
 # 一次性操作脚本（含本机绝对路径，不公开）
 commit-final.ps1
+
+# 一次性修复脚本
+fix-repo.ps1
+
