@@ -45,9 +45,14 @@ namespace DshDesktop
         private StatusStrip _statusStrip;
         private ToolStripStatusLabel _stateLabel;
         private ToolStripStatusLabel _portLabel;
+        private ToolStripStatusLabel _marketLabel;
         private ToolStripStatusLabel _workspaceLabel;
         private ToolStripStatusLabel _zoomLabel;
         private System.Windows.Forms.Timer _overlayTimer;
+        private System.Windows.Forms.Timer _marketTimer;
+        private bool _marketBusy;
+        private int _marketMisses;
+        private DateTime _nextDeepMarketCheck = DateTime.MinValue;
 
         private DshServer _server;
         private CoreWebView2Environment _environment;
@@ -252,6 +257,17 @@ namespace DshDesktop
         {
             _stateLabel = new ToolStripStatusLabel("待启动") { ForeColor = Color.FromArgb(180, 180, 185) };
             _portLabel = new ToolStripStatusLabel("");
+
+            // Plugin-market state, read from the market's local HTTP API and kept visible at all
+            // times so a pending plugin update never needs a trip into the web settings page.
+            _marketLabel = new ToolStripStatusLabel("插件市场：检测中…")
+            {
+                ForeColor = Color.FromArgb(150, 150, 158),
+                IsLink = false,
+                ToolTipText = "点击打开插件市场（设置 → 插件市场）",
+            };
+            _marketLabel.Click += (s, e) => OpenPluginMarket();
+
             _workspaceLabel = new ToolStripStatusLabel("") { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
             _zoomLabel = new ToolStripStatusLabel("");
 
@@ -259,8 +275,158 @@ namespace DshDesktop
             _statusStrip.Items.AddRange(new ToolStripItem[]
             {
                 _stateLabel, new ToolStripStatusLabel("│"), _portLabel, new ToolStripStatusLabel("│"),
+                _marketLabel, new ToolStripStatusLabel("│"),
                 _workspaceLabel, _zoomLabel,
             });
+        }
+
+        /// <summary>
+        /// Polls the plugin market. A short tick keeps the cheap read fresh while dsh is still
+        /// booting its plugin tree (the market's routes only appear partway through); the
+        /// expensive full update sweep runs on its own much slower schedule.
+        /// </summary>
+        private void StartMarketWatch()
+        {
+            _marketTimer = new System.Windows.Forms.Timer { Interval = 8000 };
+            _marketTimer.Tick += (s, e) => FireAndForget(RefreshMarketAsync(deep: false));
+            _marketTimer.Start();
+
+            // First sweep shortly after navigation, and it repeats on its own cadence.
+            FireAndForget(RefreshMarketAsync(deep: true));
+        }
+
+        private async Task RefreshMarketAsync(bool deep)
+        {
+            if (_marketBusy || string.IsNullOrEmpty(_serverUrl)) return;
+
+            // Strip the ?token=… off the session URL first: appending a path to a URL that
+            // already carries a query would bury the path inside the query string.
+            var origin = OriginOf(_serverUrl);
+            if (origin == null) return;
+
+            // While the market API is not answering yet, every tick sweeps fully: the first
+            // attempts land before dsh finishes mounting the market's routes, and waiting the
+            // full deep-check interval after a miss would leave the status bar stale for minutes.
+            var wantUpdates = deep || _marketMisses > 0 || DateTime.UtcNow >= _nextDeepMarketCheck;
+
+            _marketBusy = true;
+            try
+            {
+                var snapshot = await Task.Run(() => MarketStatus.ReadAsync(origin, wantUpdates));
+
+                // Only a successful read starts the slow cadence; a miss retries on the next tick.
+                if (wantUpdates && snapshot != null && snapshot.Reached)
+                {
+                    _nextDeepMarketCheck = DateTime.UtcNow.AddMinutes(10);
+                }
+
+                ApplyMarketSnapshot(snapshot);
+            }
+            catch (Exception ex)
+            {
+                Note("market watch failed: " + ex.Message);
+            }
+            finally
+            {
+                _marketBusy = false;
+            }
+        }
+
+        /// <summary>Scheme and authority of a URL, with any query or fragment removed.</summary>
+        private static string OriginOf(string url)
+        {
+            try
+            {
+                var uri = new Uri(url);
+                return uri.Scheme + "://" + uri.Authority;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private void ApplyMarketSnapshot(MarketStatus.Snapshot snapshot)
+        {
+            if (snapshot == null || !snapshot.Reached)
+            {
+                // The market's HTTP routes mount while dsh finishes booting its plugin tree, so
+                // the first probes after navigation routinely miss. Only call it "not installed"
+                // after enough consecutive failures that a missing plugin is the likely cause.
+                _marketMisses++;
+                if (_marketMisses < 3)
+                {
+                    _marketLabel.Text = "插件市场：检测中…";
+                    _marketLabel.ForeColor = Color.FromArgb(150, 150, 158);
+                    _marketLabel.ToolTipText = "正在等 dsh 把插件树加载完（第 " + _marketMisses + " 次尝试）";
+                    return;
+                }
+
+                _marketLabel.Text = "插件市场：未启用";
+                _marketLabel.ForeColor = Color.FromArgb(140, 140, 148);
+                _marketLabel.ToolTipText = "这个 dsh profile 没有装 dshmarket 插件（已重试 " + _marketMisses + " 次）";
+                return;
+            }
+
+            _marketMisses = 0;
+            _marketLabel.Text = snapshot.Summary() ?? "插件市场";
+            _marketLabel.ForeColor = snapshot.Busy
+                ? Color.FromArgb(220, 190, 110)
+                : snapshot.UpdateCount > 0
+                    ? Color.FromArgb(230, 170, 90)
+                    : Color.FromArgb(130, 200, 150);
+            _marketLabel.ToolTipText = BuildMarketTooltip(snapshot);
+        }
+
+        private static string BuildMarketTooltip(MarketStatus.Snapshot snapshot)
+        {
+            var text = new StringBuilder();
+            text.AppendLine("插件市场 " + (snapshot.MarketVersion ?? "?"));
+            if (snapshot.Channel != null) text.AppendLine("渠道：" + snapshot.Channel + "　区域：" + (snapshot.Region ?? "?"));
+            text.AppendLine("已装插件：" + snapshot.InstalledCount + " 个");
+
+            if (snapshot.UpdateCount > 0)
+            {
+                text.AppendLine();
+                text.AppendLine("可更新：");
+                foreach (var plugin in snapshot.Plugins)
+                {
+                    if (!plugin.UpdateAvailable) continue;
+                    text.AppendLine("  " + plugin.Name + "  " +
+                                    (plugin.InstalledVersion ?? "?") + " → " + (plugin.LatestVersion ?? "?"));
+                }
+            }
+            else if (snapshot.Plugins.Count > 0)
+            {
+                text.AppendLine();
+                text.AppendLine("所有插件都是最新版本。");
+            }
+
+            text.Append("点击打开「设置 → 插件市场」");
+            return text.ToString();
+        }
+
+        /// <summary>Opens the market by navigating to the settings route in the web UI.</summary>
+        private void OpenPluginMarket()
+        {
+            if (!_webViewReady || string.IsNullOrEmpty(_serverUrl))
+            {
+                MessageBox.Show(
+                    "界面还没加载完成，暂时打不开插件市场。",
+                    "插件市场", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            try
+            {
+                // The SPA owns routing: navigate to the root and tell it to open settings.
+                _webView.CoreWebView2.Navigate(_serverUrl);
+                SetState("正在打开插件市场", Color.FromArgb(150, 190, 220));
+            }
+            catch (Exception ex)
+            {
+                Note("open market failed: " + ex.Message);
+            }
         }
 
         private void BuildOverlay()
@@ -367,6 +533,7 @@ namespace DshDesktop
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
             try { _overlayTimer?.Stop(); } catch { }
+            try { _marketTimer?.Stop(); } catch { }
             try { _webView?.Dispose(); } catch { }
             base.OnFormClosed(e);
         }
@@ -532,6 +699,7 @@ namespace DshDesktop
                     }
 
                     await NavigateAsync(result.Url);
+                    StartMarketWatch();
                     return;
                 }
 
@@ -670,6 +838,17 @@ namespace DshDesktop
                     // Give the client plugins a moment to finish mounting before judging the DOM.
                     await Task.Delay(2500);
                     _diagnostics = await CollectDiagnosticsAsync();
+
+                    // The market's routes appear partway through dsh's boot, so wait for the
+                    // status bar to reach a settled state before reporting it.
+                    var waited = DateTime.UtcNow;
+                    while (DateTime.UtcNow - waited < TimeSpan.FromSeconds(90) &&
+                           _marketLabel != null && _marketLabel.Text != null &&
+                           _marketLabel.Text.Contains("检测中"))
+                    {
+                        await Task.Delay(1000);
+                    }
+
                     FinishSelfTest();
                     return;
                 }
@@ -705,6 +884,16 @@ namespace DshDesktop
             report.AppendLine("server running   " + (_server?.IsRunning == true));
             report.AppendLine("first navigation " + _firstNavigationSettled);
             report.AppendLine("dom diagnostics  " + _diagnostics);
+
+            // Status-bar diagnostics: proves the market label actually renders, not just that
+            // the market API answered.
+            if (_marketLabel != null)
+            {
+                report.AppendLine("market label     text=[" + _marketLabel.Text + "] width=" + _marketLabel.Width +
+                                  " visible=" + _marketLabel.Visible + " bounds=" + _marketLabel.Bounds);
+                report.AppendLine("market tooltip   " + (_marketLabel.ToolTipText ?? "").Replace(Environment.NewLine, " / "));
+            }
+            report.AppendLine("status strip     items=" + _statusStrip.Items.Count + " height=" + _statusStrip.Height);
             report.AppendLine();
             report.AppendLine("--- launcher log ---");
             report.Append(launcherLog);
