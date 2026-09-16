@@ -193,6 +193,7 @@ namespace DshDesktop
         public bool ShowHelp;
         public bool CheckUpdate;
         public bool CheckUpdateUi;
+        public bool OpenMarket;
         public string SelfTestPath;
 
         public static CommandLineOptions Parse(string[] args)
@@ -225,6 +226,9 @@ namespace DshDesktop
                         break;
                     case "--port":
                         if (i + 1 < args.Length && int.TryParse(args[++i], out var port)) options.Port = port;
+                        break;
+                    case "--open-market":
+                        options.OpenMarket = true;
                         break;
                     default:
                         if (arg.StartsWith("--workspace=", StringComparison.OrdinalIgnoreCase))

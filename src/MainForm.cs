@@ -50,6 +50,7 @@ namespace DshDesktop
         private ToolStripStatusLabel _zoomLabel;
         private System.Windows.Forms.Timer _overlayTimer;
         private System.Windows.Forms.Timer _marketTimer;
+        private System.Windows.Forms.Timer _stateResetTimer;
         private bool _marketBusy;
         private int _marketMisses;
         private DateTime _nextDeepMarketCheck = DateTime.MinValue;
@@ -266,7 +267,7 @@ namespace DshDesktop
                 IsLink = false,
                 ToolTipText = "点击打开插件市场（设置 → 插件市场）",
             };
-            _marketLabel.Click += (s, e) => OpenPluginMarket();
+            _marketLabel.Click += (s, e) => FireAndForget(OpenPluginMarketAsync());
 
             _workspaceLabel = new ToolStripStatusLabel("") { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
             _zoomLabel = new ToolStripStatusLabel("");
@@ -406,8 +407,29 @@ namespace DshDesktop
             return text.ToString();
         }
 
-        /// <summary>Opens the market by navigating to the settings route in the web UI.</summary>
-        private void OpenPluginMarket()
+        /// <summary>Honours <c>--open-market</c>: used to verify the market navigation.</summary>
+        private void TryAutoOpenMarket()
+        {
+            if (!_options.OpenMarket) return;
+
+            // Wait for the first navigation to settle; the page's controls do not exist before.
+            var waiter = new System.Windows.Forms.Timer { Interval = 1500 };
+            waiter.Tick += (s, e) =>
+            {
+                if (!_firstNavigationSettled) return;
+                waiter.Stop();
+                waiter.Dispose();
+                FireAndForget(OpenPluginMarketAsync().ContinueWith(_ => { }));
+            };
+            waiter.Start();
+        }
+
+        /// <summary>
+        /// Opens the plugin market by driving the page's own controls: the market entry only
+        /// exists in the DOM after the settings panel is open, so this clicks 设置 and then the
+        /// 插件市场 entry inside it.
+        /// </summary>
+        private async Task OpenPluginMarketAsync()
         {
             if (!_webViewReady || string.IsNullOrEmpty(_serverUrl))
             {
@@ -419,14 +441,83 @@ namespace DshDesktop
 
             try
             {
-                // The SPA owns routing: navigate to the root and tell it to open settings.
-                _webView.CoreWebView2.Navigate(_serverUrl);
-                SetState("正在打开插件市场", Color.FromArgb(150, 190, 220));
+                var clickedSettings = await TapAsync("设置");
+                if (!clickedSettings)
+                {
+                    SetTemporaryState("没找到「设置」入口", Color.FromArgb(220, 150, 150));
+                    return;
+                }
+
+                // The settings panel renders asynchronously; give it a moment before looking
+                // for the market entry inside it.
+                await Task.Delay(600);
+                var clickedMarket = await TapAsync("插件市场");
+                if (!clickedMarket)
+                {
+                    SetTemporaryState("已打开设置，请手动点「插件市场」", Color.FromArgb(220, 190, 110));
+                    return;
+                }
+
+                SetTemporaryState("已打开插件市场", Color.FromArgb(130, 200, 150));
             }
             catch (Exception ex)
             {
                 Note("open market failed: " + ex.Message);
+                SetTemporaryState("打开插件市场失败", Color.FromArgb(220, 150, 150));
             }
+        }
+
+        /// <summary>
+        /// Clicks the smallest element whose text contains the given label. Matching the
+        /// innermost match keeps this from clicking a whole container that happens to contain
+        /// the word.
+        /// </summary>
+        private async Task<bool> TapAsync(string label)
+        {
+            var script =
+                "(function(){try{" +
+                "var needle=" + JsonString(label) + ";" +
+                "var all=document.querySelectorAll('button,a,[role=button],[role=tab],[role=menuitem]');" +
+                "var best=null;" +
+                "for(var i=0;i<all.length;i++){var el=all[i];" +
+                "var t=(el.innerText||el.textContent||'').trim();" +
+                "if(t.indexOf(needle)<0)continue;" +
+                "if(t.length>60)continue;" +
+                "if(!best||t.length<best.len){best={el:el,len:t.length};}}" +
+                "if(!best)return 'NOT_FOUND';" +
+                "best.el.click();" +
+                "return 'CLICKED:'+best.len;" +
+                "}catch(e){return 'ERROR:'+e.message}})()";
+
+            var result = await _webView.CoreWebView2.ExecuteScriptAsync(script);
+            Note("tap [" + label + "] -> " + result);
+            return result != null && result.Contains("CLICKED");
+        }
+
+        /// <summary>Shows a short-lived status message instead of leaving it stuck forever.</summary>
+        private void SetTemporaryState(string text, Color color)
+        {
+            SetState(text, color);
+
+            if (_stateResetTimer == null)
+            {
+                _stateResetTimer = new System.Windows.Forms.Timer { Interval = 4000 };
+                _stateResetTimer.Tick += (s, e) =>
+                {
+                    _stateResetTimer.Stop();
+                    SetState(_server != null && _server.IsRunning ? "运行中" : "已停止",
+                             _server != null && _server.IsRunning
+                                 ? Color.FromArgb(120, 200, 140)
+                                 : Color.FromArgb(200, 120, 60));
+                };
+            }
+            _stateResetTimer.Stop();
+            _stateResetTimer.Start();
+        }
+
+        private static string JsonString(string value)
+        {
+            return "\"" + (value ?? string.Empty).Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
         }
 
         private void BuildOverlay()
@@ -700,6 +791,7 @@ namespace DshDesktop
 
                     await NavigateAsync(result.Url);
                     StartMarketWatch();
+                    TryAutoOpenMarket();
                     return;
                 }
 
@@ -810,6 +902,21 @@ namespace DshDesktop
             {
                 var script =
                     "(function(){try{var b=document.body;" +
+                    // Read-only survey: which elements carry the given label, so a caller can
+                    // click the right one instead of guessing at the SPA's selectors.
+                    "function collect(needle){var out=[];" +
+                    "var all=document.querySelectorAll('button,a,[role=button],[role=tab],[role=menuitem],li,div,span');" +
+                    "for(var i=0;i<all.length&&out.length<6;i++){var el=all[i];" +
+                    "var t=(el.innerText||el.textContent||'').trim();" +
+                    "if(t.indexOf(needle)<0)continue;" +
+                    "if(t.length>60)continue;" +
+                    "out.push({tag:el.tagName.toLowerCase()," +
+                    "cls:(el.className&&el.className.toString?el.className.toString():'').slice(0,60)," +
+                    "role:el.getAttribute('role')||''," +
+                    "aria:el.getAttribute('aria-label')||''," +
+                    "href:el.getAttribute('href')||''," +
+                    "id:el.id||'',text:t.slice(0,40)});}" +
+                    "return out;}" +
                     "return JSON.stringify({" +
                     "title:document.title," +
                     "url:location.href," +
@@ -818,6 +925,9 @@ namespace DshDesktop
                     "nodes:b?b.querySelectorAll('*').length:0," +
                     "hasComposer:!!document.querySelector('textarea,[contenteditable=true]')," +
                     "sidebarItems:b?b.querySelectorAll('li,button').length:0," +
+                    "clickables:collect('设置')," +
+                    "marketCandidates:collect('插件市场')," +
+                    "marketOpen:((b?b.innerText:'').indexOf('插件市场')>=0)," +
                     "snippet:(b?b.innerText:'').replace(/\\s+/g,' ').slice(0,240)" +
                     "});}catch(e){return 'DIAG_ERROR: '+e.message}})()";
                 return await _webView.CoreWebView2.ExecuteScriptAsync(script);
@@ -847,6 +957,14 @@ namespace DshDesktop
                            _marketLabel.Text.Contains("检测中"))
                     {
                         await Task.Delay(1000);
+                    }
+
+                    // When the run asked to open the market, give that navigation time to land
+                    // and then re-read the DOM so the report can prove it worked.
+                    if (_options.OpenMarket)
+                    {
+                        await Task.Delay(7000);
+                        _diagnostics = await CollectDiagnosticsAsync();
                     }
 
                     FinishSelfTest();
