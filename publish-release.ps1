@@ -25,9 +25,20 @@ function Redact([string]$t) { if ($t) { $t.Replace($token, '***') } else { $t } 
 $sums = Get-Content (Join-Path $PSScriptRoot 'artifacts\release\SHA256SUMS.txt') -Raw
 
 $notes = @"
-程序元数据更新：exe 属性里的"公司"改为项目所有者 **贤余sama**，关于对话框的署名同步更新。
+修掉一个会让「检查更新」莫名失败的缺陷。
 
-功能与 1.2.0 相同 —— 含**一键自更新**。如果你还在 1.1.0，装上这一版之后就能一键更新了。
+## 修了什么
+
+GitHub 对**未认证**的 API 请求按 **IP** 限每小时 60 次，同 IP 所有人共用这一份。
+配额一耗尽，「检查更新」就失败，而原来的提示是"连不上 GitHub"——把用户引向完全错误的排查方向。
+
+现在：
+
+- 程序会复用 **Git Credential Manager 里已授权的凭据**（就是 ``git push`` 时授权过的那份），
+  配额从 **60 次/小时（按 IP）** 变成 **5000 次/小时（按你的账号）**，不再被同 IP 的其它请求挤掉
+- 机器上没有该凭据时自动退回匿名请求，行为与之前一致
+- 遇到 403/429 时明确提示"配额已用尽"并给出恢复时间，不再误报成网络问题
+- ``--check-update`` 增加 ``auth`` 一行，一眼看出走的是匿名还是带凭据
 
 ## 一键更新怎么工作
 
@@ -52,8 +63,8 @@ Windows 不允许覆盖正在运行的 exe，所以流程是：
 
 | 包 | 大小 | 适用 |
 | --- | --- | --- |
-| ``dsh-desktop-$version-win-x64.zip`` | 0.6 MB | **推荐**。需要 .NET 8 桌面运行时 |
-| ``dsh-desktop-$version-win-x64-selfcontained.zip`` | 58 MB | 零依赖，已内嵌运行时 |
+| ``dsh-desktop-$version-win-x64.zip`` | 0.7 MB | **推荐**。需要 .NET 8 桌面运行时 |
+| ``dsh-desktop-$version-win-x64-selfcontained.zip`` | 62 MB | 零依赖，已内嵌运行时 |
 
 ## 这不是 Harness 本身
 
