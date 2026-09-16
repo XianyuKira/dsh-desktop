@@ -54,41 +54,51 @@ namespace DshDesktop
                     client.Timeout = TimeSpan.FromSeconds(20);
                     client.DefaultRequestHeaders.UserAgent.ParseAdd("dsh-desktop/" + CurrentDisplay);
                     client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+                    // Anonymous requests get 60/hour per IP; a stored credential gets 5000/hour.
+                    GitHubCredential.Apply(client);
 
-                    var json = await client.GetStringAsync(LatestReleaseApi, cancellationToken).ConfigureAwait(false);
-                    using (var document = JsonDocument.Parse(json))
+                    using (var response = await client.GetAsync(LatestReleaseApi, cancellationToken).ConfigureAwait(false))
                     {
-                        var root = document.RootElement;
-                        var tag = root.TryGetProperty("tag_name", out var tagElement) ? tagElement.GetString() : null;
-                        var url = root.TryGetProperty("html_url", out var urlElement) ? urlElement.GetString() : ReleasesPage;
-                        var published = root.TryGetProperty("published_at", out var publishedElement) ? publishedElement.GetString() : null;
-
-                        if (string.IsNullOrWhiteSpace(tag))
+                        if (!response.IsSuccessStatusCode)
                         {
-                            return new Result { Succeeded = false, Message = "未能从 GitHub 读取版本号。" };
+                            return new Result { Succeeded = false, Message = DescribeStatus(response) };
                         }
 
-                        var latest = ParseVersion(tag);
-                        if (latest == null)
+                        var json = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+                        using (var document = JsonDocument.Parse(json))
                         {
+                            var root = document.RootElement;
+                            var tag = root.TryGetProperty("tag_name", out var tagElement) ? tagElement.GetString() : null;
+                            var url = root.TryGetProperty("html_url", out var urlElement) ? urlElement.GetString() : ReleasesPage;
+                            var published = root.TryGetProperty("published_at", out var publishedElement) ? publishedElement.GetString() : null;
+
+                            if (string.IsNullOrWhiteSpace(tag))
+                            {
+                                return new Result { Succeeded = false, Message = "未能从 GitHub 读取版本号。" };
+                            }
+
+                            var latest = ParseVersion(tag);
+                            if (latest == null)
+                            {
+                                return new Result
+                                {
+                                    Succeeded = false,
+                                    Message = "最新发布标签无法解析为版本号：" + tag,
+                                    LatestTag = tag,
+                                    ReleaseUrl = url,
+                                };
+                            }
+
                             return new Result
                             {
-                                Succeeded = false,
-                                Message = "最新发布标签无法解析为版本号：" + tag,
+                                Succeeded = true,
+                                Latest = latest,
                                 LatestTag = tag,
                                 ReleaseUrl = url,
+                                PublishedAt = published,
+                                UpdateAvailable = latest > Current,
                             };
                         }
-
-                        return new Result
-                        {
-                            Succeeded = true,
-                            Latest = latest,
-                            LatestTag = tag,
-                            ReleaseUrl = url,
-                            PublishedAt = published,
-                            UpdateAvailable = latest > Current,
-                        };
                     }
                 }
             }
@@ -99,6 +109,49 @@ namespace DshDesktop
                     Succeeded = false,
                     Message = Describe(ex),
                 };
+            }
+        }
+
+        /// <summary>
+        /// Explains a non-success HTTP status. Rate limiting gets its own wording, because
+        /// "cannot reach GitHub" would send the user chasing a network problem that is not there.
+        /// </summary>
+        private static string DescribeStatus(System.Net.Http.HttpResponseMessage response)
+        {
+            var status = (int)response.StatusCode;
+
+            // 403 is what GitHub returns when the anonymous per-IP quota is exhausted;
+            // 429 is the explicit "too many requests" form.
+            if (status == 403 || status == 429)
+            {
+                var remaining = Header(response, "X-RateLimit-Remaining");
+                var reset = Header(response, "X-RateLimit-Reset");
+                var when = string.Empty;
+                if (long.TryParse(reset, out var epoch))
+                {
+                    try { when = "，约 " + DateTimeOffset.FromUnixTimeSeconds(epoch).ToLocalTime().ToString("HH:mm") + " 恢复"; }
+                    catch { }
+                }
+
+                return remaining == "0"
+                    ? "GitHub 请求配额已用尽" + when + "。匿名请求按 IP 限每小时 60 次；稍后重试即可。"
+                    : "GitHub 拒绝了本次请求（HTTP " + status + "）。稍后重试，或改用「打开发布页」手动更新。";
+            }
+
+            return "GitHub 返回 HTTP " + status + "。可稍后重试，或用「打开发布页」手动更新。";
+        }
+
+        private static string Header(System.Net.Http.HttpResponseMessage response, string name)
+        {
+            try
+            {
+                return response.Headers.TryGetValues(name, out var values)
+                    ? string.Join(",", values).Trim()
+                    : null;
+            }
+            catch
+            {
+                return null;
             }
         }
 

@@ -15,7 +15,7 @@
     <Product>DeepSeek Harness 桌面版</Product>
     <AssemblyTitle>DeepSeek Harness 桌面版</AssemblyTitle>
     <Company>贤余sama</Company>
-    <Version>1.2.1</Version>
+    <Version>1.2.2</Version>
     <DebugType>none</DebugType>
     <!-- The WPF flavour of WebView2 is unused here; dropping it removes a WindowsBase clash warning. -->
     <ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>None</ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>

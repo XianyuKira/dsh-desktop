@@ -215,6 +215,8 @@ namespace DshDesktop
             var client = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
             client.DefaultRequestHeaders.UserAgent.ParseAdd("dsh-desktop/" + UpdateCheck.CurrentDisplay);
             client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+            // Share the quota with the update check: anonymous access is 60/hour per IP.
+            GitHubCredential.Apply(client);
             return client;
         }
 
@@ -243,7 +245,15 @@ namespace DshDesktop
         {
             var cause = ex;
             while (cause.InnerException != null) cause = cause.InnerException;
-            if (cause is HttpRequestException) return "下载失败：连不上 GitHub。";
+
+            if (cause is HttpRequestException http)
+            {
+                // 403 on the API is GitHub's anonymous quota, not a connectivity problem.
+                var status = (int?)http.StatusCode;
+                if (status == 403 || status == 429)
+                    return "GitHub 请求配额已用尽或被拒绝，请稍后重试。";
+                return "下载失败：连不上 GitHub。";
+            }
             if (cause is TaskCanceledException || cause is OperationCanceledException) return "下载超时。";
             return cause.Message;
         }

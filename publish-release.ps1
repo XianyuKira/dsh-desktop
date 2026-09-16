@@ -1,4 +1,4 @@
-# Publish a GitHub release for the current csproj version, using the credential
+﻿# Publish a GitHub release for the current csproj version, using the credential
 # already stored by Git Credential Manager (git push authorized it once).
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
@@ -25,17 +25,28 @@ function Redact([string]$t) { if ($t) { $t.Replace($token, '***') } else { $t } 
 $sums = Get-Content (Join-Path $PSScriptRoot 'artifacts\release\SHA256SUMS.txt') -Raw
 
 $notes = @"
-把 dsh 的 Web 界面装进独立窗口的小程序。本版新增**检查更新**。
+程序元数据更新：exe 属性里的"公司"改为项目所有者 **贤余sama**，关于对话框的署名同步更新。
 
-## 新增
+功能与 1.2.0 相同 —— 含**一键自更新**。如果你还在 1.1.0，装上这一版之后就能一键更新了。
 
-- 菜单 → **检查更新**：查询 GitHub 最新版本并告诉你结果
-  - 已是最新：显示当前版本，无需操作
-  - 有新版本：显示版本号与发布时间，一键跳转下载
+## 一键更新怎么工作
+
+Windows 不允许覆盖正在运行的 exe，所以流程是：
+
+``````
+下载新包 → 启动更新助手 → 主程序退出（顺带关掉它托管的 dsh 服务）
+        → 助手把新文件覆盖进原目录 → 自动重新打开程序
+``````
+
+**就地替换，同一个文件夹**，不会再堆出新目录。你自己放进该目录的其它文件不会被删。
+
+菜单 → **检查更新** → 有新版本时点「**一键更新**」，带下载进度。
+
+## 其他既有功能
+
+- 菜单 → **检查更新**：已是最新时显示当前版本，有新版本时给出更新入口
 - 关于对话框显示当前版本号
 - 命令行 ``--check-update``：检查后退出（0=最新，10=有新版，1=失败），方便脚本化
-
-程序**不会自动下载或替换自身**，检查更新只负责告知。
 
 ## 选哪个包
 
@@ -58,11 +69,10 @@ setx DEEPSEEK_API_KEY "sk-你的key"     # 自备 key
 
 ## 从旧版更新
 
-绿色程序，没有安装器：
+如果你在 **1.1.0 或更早**：那一版还没有一键更新的能力，所以需要手动一次 ——
+关闭程序、下载上面的 zip、解压覆盖原目录、再双击程序。之后就能一键更新了。
 
-1. 关闭正在运行的程序（否则 exe 被占用）
-2. 下载新包，解压覆盖旧文件
-3. 双击新的 ``DeepSeekHarness.exe``
+如果已经在 **1.2.0 及以上**：直接用菜单里的「一键更新」，不用下载这里的包。
 
 会话与设置不在程序目录（在 ``%LOCALAPPDATA%\DshDesktop\`` 与 ``%USERPROFILE%\.dsh\``），覆盖不会丢数据。
 
