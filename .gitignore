@@ -35,3 +35,6 @@ desktop.ini
 
 # 一次性准备脚本（含本机绝对路径，不公开）
 prep-git.ps1
+
+# 一次性操作脚本（含本机绝对路径，不公开）
+commit-final.ps1
