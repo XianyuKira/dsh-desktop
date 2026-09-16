@@ -1,0 +1,33 @@
+# 构建产物
+bin/
+obj/
+app/
+publish/
+
+# 由 tools/IconMaker 在构建时生成的图标
+src/app.ico
+
+# 自检与验收产物
+selftest-report.txt
+selftest-report.txt.error.txt
+*.tail.txt
+icon-preview.png
+
+# 用户本地设置（可能包含本机路径、端口）
+settings.json
+webview/
+
+# IDE / 编辑器
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# 系统垃圾
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# 一次性准备脚本（含本机绝对路径，不公开）
+prep-git.ps1

@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>DeepSeekHarness</AssemblyName>
+    <RootNamespace>DshDesktop</RootNamespace>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <Product>DeepSeek Harness 桌面版</Product>
+    <AssemblyTitle>DeepSeek Harness 桌面版</AssemblyTitle>
+    <Company>咕喵喵</Company>
+    <Version>1.0.0</Version>
+    <DebugType>none</DebugType>
+    <!-- The WPF flavour of WebView2 is unused here; dropping it removes a WindowsBase clash warning. -->
+    <ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>None</ResolveAssemblyWarnOrErrorOnTargetArchitectureMismatch>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
+
+  <!-- This is a WinForms host; the WPF flavour of the package would only add a
+       WindowsBase version clash, so it is dropped after restore. -->
+  <Target Name="DropUnusedWebView2WpfReference" AfterTargets="ResolvePackageAssets">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+
+</Project>
