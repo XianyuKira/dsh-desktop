@@ -1,90 +1,142 @@
-﻿[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+# Build release packages: framework-dependent zip + self-contained zip, plus SHA256SUMS.txt.
+# ASCII only on purpose: PowerShell 5.1 misreads UTF-8 without a BOM, and this script
+# must survive being edited by tools that drop the BOM.
+#
+#   .\make-release.ps1                          packages app\ (after build.ps1)
+#   .\make-release.ps1 -FrameworkDir <dir>      packages <dir> instead; needed when the
+#                                               app is running and app\ cannot be replaced
+
+param(
+    [string]$FrameworkDir = 'app',
+    [string]$SelfContainedDir = 'artifacts\selfcontained',
+    [switch]$SkipPreflight
+)
+
 $ErrorActionPreference = 'Stop'
-$proj = "C:\Users\xiany\Desktop\dsh-desktop"
+$proj = $PSScriptRoot
 Set-Location $proj
 
-$version = '1.0.0'
+# ---------- version comes from the csproj, the single source of truth ----------
+$csproj = Join-Path $proj 'src\DeepSeekHarness.csproj'
+$csprojText = [System.IO.File]::ReadAllText($csproj, [System.Text.Encoding]::UTF8)
+$version = [regex]::Match($csprojText, '<Version>([^<]+)</Version>').Groups[1].Value
+if (-not $version) { throw 'cannot read <Version> from csproj' }
+Write-Host "version: $version"
+
+# ---------- preflight ----------
+Write-Host '=== 0. preflight ==='
+if (-not $SkipPreflight) {
+    $dirty = git status --porcelain
+    if ($dirty) {
+        Write-Host 'working tree has uncommitted changes:'
+        $dirty | ForEach-Object { Write-Host "  $_" }
+        throw 'commit first, so the package matches the tag'
+    }
+    Write-Host '  working tree clean'
+
+    git rev-parse -q --verify "refs/tags/v$version" | Out-Null
+    if ($LASTEXITCODE -eq 0) { throw "tag v$version already exists; bump <Version> first" }
+    Write-Host "  tag v$version is free"
+} else {
+    Write-Host '  preflight skipped'
+}
+
+$frameDir = if ([System.IO.Path]::IsPathRooted($FrameworkDir)) { $FrameworkDir } else { Join-Path $proj $FrameworkDir }
+$scDir = if ([System.IO.Path]::IsPathRooted($SelfContainedDir)) { $SelfContainedDir } else { Join-Path $proj $SelfContainedDir }
+
+if (-not (Test-Path (Join-Path $frameDir 'DeepSeekHarness.exe'))) {
+    throw "framework-dependent build not found in $frameDir; run build.ps1 first"
+}
+Write-Host "  framework source: $frameDir"
+
+$packagedVersion = (Get-Item (Join-Path $frameDir 'DeepSeekHarness.exe')).VersionInfo.FileVersion
+Write-Host "  packaged exe version: $packagedVersion"
+if ($packagedVersion -notlike "$version*") {
+    throw "packaged exe is $packagedVersion but csproj says $version; rebuild before packaging"
+}
+
 $stage = Join-Path $proj 'artifacts\stage'
 $outDir = Join-Path $proj 'artifacts\release'
 Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $outDir -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $stage, $outDir | Out-Null
 
-# ---------- 包内说明 ----------
+# ---------- bundled README.txt ----------
 $readme = @"
-DeepSeek Harness 桌面版 v$version
-================================
+DeepSeek Harness Desktop v$version
+=================================
 
-把 dsh 的 Web 界面装进一个独立窗口，不经过浏览器。
+Puts the dsh web UI in its own window. No browser involved.
 
-【这个包本身不含 Harness】
-它只是给 dsh 换了个窗口，所以运行前 dsh 要能用：
+[This package is not Harness itself]
+It only gives dsh a window, so dsh must already work:
 
-  1. 装 Node.js（>= 20）           https://nodejs.org
-  2. npm i -g @deepseek-ai/dsh     验证：dsh --version
-  3. 配模型凭据（自备 DeepSeek API Key）：
+  1. Install Node.js (>= 20)        https://nodejs.org
+  2. npm i -g @deepseek-ai/dsh      check: dsh --version
+  3. Provide a model credential (your own DeepSeek API key):
      setx DEEPSEEK_API_KEY "sk-..."
-     或先跑一次 dsh web，在界面里填
+     or run 'dsh web' once and fill it in there.
 
-【怎么跑】
-双击 DeepSeekHarness.exe 即可。首次启动约 5-10 秒
-（要等 dsh 加载插件树），会显示“正在启动 dsh 服务…”。
+[How to run]
+Double-click DeepSeekHarness.exe. First start takes about 5-10 seconds
+while dsh loads its plugin tree; the window shows progress meanwhile.
 
-想放桌面就右键 exe → 发送到 → 桌面快捷方式。
+To pin it to the desktop: right-click the exe -> Send to -> Desktop (create shortcut).
 
-【这个版本需要什么】
+[What this build needs]
 - Windows 10 / 11
-- .NET 8 桌面运行时（若缺，双击时会提示并给出下载地址）
-- Edge WebView2 运行时（Win11 及多数 Win10 已自带）
+- .NET 8 Desktop Runtime (if missing, Windows offers the download)
+- Edge WebView2 Runtime (already present on Win11 and most Win10)
 
-【小提示】
-- 首次运行 Windows 可能弹 SmartScreen 警告（exe 没有代码签名），
-  点“更多信息” → “仍要运行”即可。
-- 窗口关闭 = 该 dsh 服务结束；你另外开着的 dsh web 不受影响。
-- 端口默认 3080，被占用会自动换一个空闲端口。
+[Notes]
+- SmartScreen may warn on first run (the exe is unsigned): More info -> Run anyway.
+- Closing the window ends this dsh server. Any dsh web you started yourself is unaffected.
+- Default port is 3080; if it is taken, a free port is chosen automatically.
 
-官网仓库：https://github.com/XianyuKira/dsh-desktop
-许可：MIT
+Repository: https://github.com/XianyuKira/dsh-desktop
+License: MIT
 "@
 $readme | Out-File (Join-Path $stage 'README.txt') -Encoding UTF8
 
-# ---------- 1. 框架依赖包 ----------
-"=== 1. 打包框架依赖版 ==="
+# ---------- 1. framework-dependent ----------
+Write-Host '=== 1. framework-dependent package ==='
 $zipA = Join-Path $outDir "dsh-desktop-$version-win-x64.zip"
-Copy-Item (Join-Path $proj 'app\*') $stage -Recurse -Force
+Copy-Item (Join-Path $frameDir '*') $stage -Recurse -Force
 Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zipA -Force
-"  $([math]::Round((Get-Item $zipA).Length/1MB, 2)) MB -> $zipA"
+Write-Host ("  {0:N2} MB -> {1}" -f ((Get-Item $zipA).Length / 1MB), (Split-Path $zipA -Leaf))
 
-# ---------- 2. 自包含包 ----------
+# ---------- 2. self-contained ----------
 Remove-Item $stage -Recurse -Force
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
-"=== 2. 打包自包含版 ==="
-$scDir = Join-Path $proj 'artifacts\selfcontained'
-Copy-Item (Join-Path $scDir 'DeepSeekHarness.exe') $stage -Force
-$readmeBig = $readme -replace '【这个版本需要什么】[\s\S]*?【小提示】', @"
-【这个版本需要什么】
+Write-Host '=== 2. self-contained package ==='
+$scExe = Join-Path $scDir 'DeepSeekHarness.exe'
+if (-not (Test-Path $scExe)) {
+    throw "self-contained build not found in $scDir"
+}
+Copy-Item $scExe $stage -Force
+$readmeBig = $readme -replace '\[What this build needs\][\s\S]*?\[Notes\]', @"
+[What this build needs]
 - Windows 10 / 11
-- 已自带 .NET 运行时，不需要另外安装任何东西
-- 仅需 Edge WebView2 运行时（Win11 及多数 Win10 已自带）
+- .NET runtime is bundled: nothing else to install
+- Edge WebView2 Runtime only (already present on Win11 and most Win10)
 
-【小提示】
+[Notes]
 "@
 $readmeBig | Out-File (Join-Path $stage 'README.txt') -Encoding UTF8
 $zipB = Join-Path $outDir "dsh-desktop-$version-win-x64-selfcontained.zip"
 Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zipB -Force
-"  $([math]::Round((Get-Item $zipB).Length/1MB, 2)) MB -> $zipB"
+Write-Host ("  {0:N2} MB -> {1}" -f ((Get-Item $zipB).Length / 1MB), (Split-Path $zipB -Leaf))
 
-# ---------- 3. 校验和 ----------
-"=== 3. 计算 SHA256 ==="
-$lines = foreach ($z in @($zipA, $zipB)) {
-    $h = (Get-FileHash $z -Algorithm SHA256).Hash.ToLower()
-    "  $(Split-Path $z -Leaf)"
-    "    $h"
-    "$h  $(Split-Path $z -Leaf)"
+# ---------- 3. checksums ----------
+Write-Host '=== 3. SHA256 ==='
+$sums = foreach ($z in @($zipA, $zipB)) {
+    $hash = (Get-FileHash $z -Algorithm SHA256).Hash.ToLower()
+    Write-Host "  $(Split-Path $z -Leaf)"
+    Write-Host "    $hash"
+    "$hash  $(Split-Path $z -Leaf)"
 }
-$lines | Out-File (Join-Path $outDir 'SHA256SUMS.txt') -Encoding ASCII
-Get-Content (Join-Path $outDir 'SHA256SUMS.txt')
+$sums | Out-File (Join-Path $outDir 'SHA256SUMS.txt') -Encoding ASCII
 
 Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
-"=== 完成，产物在 artifacts\release\ ==="
-Get-ChildItem $outDir | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,2)}} | Format-Table -AutoSize
+Write-Host '=== done: artifacts\release ==='
+Get-ChildItem $outDir | Select-Object Name, @{n = 'MB'; e = { [math]::Round($_.Length / 1MB, 2) } } | Format-Table -AutoSize

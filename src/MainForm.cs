@@ -180,11 +180,14 @@ namespace DshDesktop
             var itemAbout = new ToolStripMenuItem("关于(&A)");
             itemAbout.Click += (s, e) => ShowAbout();
 
+            var itemUpdate = new ToolStripMenuItem("检查更新(&U)…");
+            itemUpdate.Click += (s, e) => FireAndForget(UpdateDialog.ShowCheckAsync(this));
+
             _menuButton.DropDownItems.AddRange(new ToolStripItem[]
             {
                 itemOpen, itemCopy, new ToolStripSeparator(), itemWorkspace, itemDevTools,
                 new ToolStripSeparator(), itemDataFolder, itemLogFolder, new ToolStripSeparator(),
-                itemRestart, itemStop, new ToolStripSeparator(), itemAbout,
+                itemRestart, itemStop, new ToolStripSeparator(), itemUpdate, itemAbout,
             });
 
             _toolStrip.Items.AddRange(new ToolStripItem[]
@@ -815,7 +818,7 @@ namespace DshDesktop
         private void ShowAbout()
         {
             var text = new StringBuilder();
-            text.AppendLine("DeepSeek Harness 桌面版");
+            text.AppendLine("DeepSeek Harness 桌面版 " + UpdateCheck.CurrentDisplay);
             text.AppendLine();
             text.AppendLine("把 dsh 的 Web 界面装进一个独立窗口：双击即用，无需浏览器。");
             text.AppendLine();

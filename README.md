@@ -108,7 +108,28 @@ Set-ExecutionPolicy -Scope Process Bypass
 | 菜单 → 更改工作目录 | 换 dsh 的工作目录（= 会话默认工作区），会自动重启服务 |
 | 菜单 → 开发者工具 | 打开 WebView2 DevTools（F12） |
 | 菜单 → 重启 / 停止 dsh 服务 | 手动控制后台服务 |
+| 菜单 → 检查更新 | 查询 GitHub 上有没有新版本（见下节） |
 | 状态栏 | 服务状态、端口、工作目录、缩放比例 |
+
+## 更新
+
+本程序是**绿色程序，没有安装器**，所以覆盖文件就是更新，卸载就是删目录。
+
+菜单 → **检查更新** 会去 GitHub 查最新 Release，并告诉你结果：
+
+- 已经是最新 → 提示当前版本，无需操作
+- 有新版本 → 显示最新版本号与发布时间，按钮可直达下载
+
+**更新步骤**（3 步）：
+
+1. 关闭正在运行的程序（否则 `exe` 被占用，覆盖会失败）
+2. 下载新版压缩包，解压覆盖到程序目录（或直接解压到新目录）
+3. 双击新的 `DeepSeekHarness.exe`
+
+程序**不会自动下载或替换自身** —— 检查更新只负责告诉你有没有新版。
+
+> 会话、设置、工作区数据都不在程序目录里（在 `%LOCALAPPDATA%\DshDesktop\` 和 dsh 自己的 `~/.dsh/`），
+> 所以覆盖/删除程序目录不会丢数据。
 
 ## 常用参数
 
@@ -119,6 +140,7 @@ DeepSeekHarness.exe [选项]
   --port <端口>        指定端口，0 表示由系统随机分配（默认：3080）
   --portable           设置与缓存放在程序目录，而不是 %LOCALAPPDATA%
   --browser            不用内嵌窗口，改为在系统默认浏览器中打开
+  --check-update       检查更新后退出（0=最新，10=有新版，1=检查失败）
   --selftest[=<文件>]  自动启动、自检并写报告后退出（开发用）
   -h, --help           帮助
 ```
@@ -155,6 +177,8 @@ src\
   MainForm.cs          窗口：工具条、日志面板、加载态、缩放、菜单
   DshServer.cs         子进程管理、token URL 解析、Job Object 进程看守
   AppConfig.cs         settings.json 读写、端口与工作目录
+  UpdateCheck.cs       查询 GitHub 最新 Release 并比较版本
+  UpdateDialog.cs      更新结果对话框
   app.ico              构建时生成，不纳入版本控制
 tools\IconMaker\       用 .NET 现画多尺寸 .ico，仓库里不含二进制美术资源
 ```
