@@ -115,21 +115,33 @@ Set-ExecutionPolicy -Scope Process Bypass
 
 本程序是**绿色程序，没有安装器**，所以覆盖文件就是更新，卸载就是删目录。
 
-菜单 → **检查更新** 会去 GitHub 查最新 Release，并告诉你结果：
+菜单 → **检查更新** 会去 GitHub 查最新 Release：
 
 - 已经是最新 → 提示当前版本，无需操作
-- 有新版本 → 显示最新版本号与发布时间，按钮可直达下载
+- 有新版本 → 显示版本号与发布时间，点 **「一键更新」** 即可
 
-**更新步骤**（3 步）：
+### 一键更新做了什么
 
-1. 关闭正在运行的程序（否则 `exe` 被占用，覆盖会失败）
-2. 下载新版压缩包，解压覆盖到程序目录（或直接解压到新目录）
-3. 双击新的 `DeepSeekHarness.exe`
+Windows 不允许覆盖正在运行的 exe，所以顺序是：
 
-程序**不会自动下载或替换自身** —— 检查更新只负责告诉你有没有新版。
+```
+1. 下载新包到临时目录，并校验它确实是 zip
+2. 启动更新助手 DshDesktopUpdater.exe（独立进程，不受主程序退出影响）
+3. 主程序退出（顺带正常关闭它托管的 dsh 服务）
+4. 助手等你退出后，把新文件逐个覆盖进原目录
+5. 助手重新打开主程序 → 你回到同样的位置，同一个文件夹
+```
 
-> 会话、设置、工作区数据都不在程序目录里（在 `%LOCALAPPDATA%\DshDesktop\` 和 dsh 自己的 `~/.dsh/`），
-> 所以覆盖/删除程序目录不会丢数据。
+**就地替换，不会再堆出新目录**。同名文件被覆盖，你自己放进去的其它文件保持不动。整个过程约几秒（取决于下载速度）。
+
+> 会话、设置、工作区数据都不在程序目录里（在 `%LOCALAPPDATA%\DshDesktop\` 和 `%USERPROFILE%\.dsh\`），
+> 所以更新、覆盖、甚至直接删掉程序目录都不会丢数据。
+
+### 如果自动更新失败
+
+程序目录里会留有 `DshDesktopUpdater.exe`，日志在 `%TEMP%\dsh-desktop-update.log`。
+最坏情况下按老办法手动来：到 [Releases](https://github.com/XianyuKira/dsh-desktop/releases/latest) 下载 zip、
+关闭程序、解压覆盖、再双击。
 
 ## 常用参数
 
@@ -179,8 +191,12 @@ src\
   DshServer.cs         子进程管理、token URL 解析、Job Object 进程看守
   AppConfig.cs         settings.json 读写、端口与工作目录
   UpdateCheck.cs       查询 GitHub 最新 Release 并比较版本
-  UpdateDialog.cs      更新结果对话框
+  AppUpdate.cs         下载更新包并交给更新助手
+  UpdateDialog.cs      更新结果对话框与一键更新流程
   app.ico              构建时生成，不纳入版本控制
+tools\Updater\         更新助手 exe（随程序一起分发）
+tools\Updater.Core\    文件替换引擎（独立成库，便于用夹具真实测试）
+tools\Updater.Tests\   夹具：真启动一个进程并替换它，验证 exe 被锁时的更新路径
 tools\IconMaker\       用 .NET 现画多尺寸 .ico，仓库里不含二进制美术资源
 ```
 

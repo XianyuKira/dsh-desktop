@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>DshDesktopUpdater.Core</AssemblyName>
+    <RootNamespace>DshDesktopUpdater</RootNamespace>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+</Project>

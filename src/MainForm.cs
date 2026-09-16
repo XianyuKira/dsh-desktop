@@ -78,6 +78,23 @@ namespace DshDesktop
         /// <summary>Aggregated evidence produced for <c>--selftest</c>; written by Program.Main.</summary>
         public string SelfTestReport { get; private set; }
 
+        /// <summary>
+        /// Closes the window so the update helper can replace files. Going through the normal
+        /// close path stops the dsh server first, which is what releases the executable.
+        /// </summary>
+        public void RequestExitForUpdate()
+        {
+            try
+            {
+                if (IsHandleCreated) BeginInvoke(new Action(Close));
+                else Close();
+            }
+            catch
+            {
+                try { Close(); } catch { }
+            }
+        }
+
         // ---------------------------------------------------------------- interface
 
         private void BuildInterface()

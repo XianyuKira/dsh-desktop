@@ -1,4 +1,4 @@
-﻿# Build release packages: framework-dependent zip + self-contained zip, plus SHA256SUMS.txt.
+# Build release packages: framework-dependent zip + self-contained zip, plus SHA256SUMS.txt.
 # ASCII only on purpose: PowerShell 5.1 misreads UTF-8 without a BOM, and this script
 # must survive being edited by tools that drop the BOM.
 #
@@ -54,6 +54,12 @@ Write-Host "  packaged exe version: $packagedVersion"
 if ($packagedVersion -notlike "$version*") {
     throw "packaged exe is $packagedVersion but csproj says $version; rebuild before packaging"
 }
+
+# Self-update needs the helper next to the app, so a package without it cannot update itself.
+if (-not (Test-Path (Join-Path $frameDir 'DshDesktopUpdater.exe'))) {
+    throw "DshDesktopUpdater.exe is missing from $frameDir; run build.ps1 (it publishes the helper)"
+}
+Write-Host '  update helper present'
 
 $stage = Join-Path $proj 'artifacts\stage'
 $outDir = Join-Path $proj 'artifacts\release'

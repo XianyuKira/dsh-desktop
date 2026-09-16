@@ -41,4 +41,10 @@ commit-final.ps1
 
 # 一次性修复脚本
 fix-repo.ps1
+# 本机调试脚本（含绝对路径，一次性用途）
+launch-browser.ps1
+start-browser.ps1
+浏览器版 dsh web.bat
+# 一次性暂存脚本
+stage12.ps1
 
