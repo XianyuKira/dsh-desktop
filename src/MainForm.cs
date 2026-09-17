@@ -60,7 +60,13 @@ namespace DshDesktop
         private string _webViewDataFolder;
 
         private int _overlayTick;
-        private int _zoomPercent = 20;
+
+        /// <summary>
+        /// Interface zoom in percent. This must start at 100: it was once 20, which shrank the
+        /// whole UI to a fifth of its size on every launch and made the app unreadable.
+        /// </summary>
+        private int _zoomPercent = 100;
+
         private bool _webViewReady;
         private bool _firstNavigationSettled;
         private bool _logVisible;
@@ -646,7 +652,7 @@ namespace DshDesktop
                     StepZoom(-5);
                     return true;
                 case Keys.Control | Keys.D0:
-                    SetZoom(20);
+                    SetZoom(100);   // Ctrl+0 resets to the normal size, as in a browser
                     return true;
                 case Keys.F12:
                     try { _webView.CoreWebView2?.OpenDevToolsWindow(); } catch { }
@@ -667,6 +673,46 @@ namespace DshDesktop
             _workspaceLabel.Text = "工作目录 " + workspace;
             Note("workspace " + workspace);
 
+            // A packaged install carries its own Node, dsh and plugin set; wire those up first so
+            // nothing below depends on what happens to be installed on the machine.
+            if (_config.IsBundled)
+            {
+                Note("packaged install: node=" + _config.BundledNode);
+                Note("packaged install: vendor=" + _config.BundledVendor);
+                DshLocator.UseBundledRuntime(_config.BundledNode, _config.BundledVendor);
+                DshLocator.PackagedDshHome = _config.DshHome;
+                Note("packaged install: DSH_HOME=" + _config.DshHome);
+            }
+
+            // First run: ask where data goes and for the API key. This is not tied to being a
+            // packaged install — any fresh install needs the answer, and gating it on the bundle
+            // once meant a plain build never asked at all.
+            if (!_config.SetupComplete)
+            {
+                Note("first run: showing setup");
+                HideOverlay();
+                using (var setup = new SetupDialog(_config))
+                {
+                    var answer = setup.ShowDialog(this);
+                    if (!setup.Completed)
+                    {
+                        Note("setup was dismissed; continuing without the API key");
+                    }
+                    else
+                    {
+                        Note("setup complete: data=" + _config.DataDirectory);
+                        _workspaceLabel.Text = "工作目录 " + _config.ResolveWorkspace();
+                    }
+                }
+            }
+
+            // Deploy the bundled profile (plugin list + packages) into DSH_HOME once.
+            if (_config.IsBundled)
+            {
+                ShowOverlay("正在准备插件…", "首次运行需要把随包插件部署到数据目录");
+                await Task.Run(() => ProvisionProfile());
+            }
+
             ShowOverlay("正在检查 dsh 安装…", "查找 node 与 @deepseek-ai/dsh");
             Application.DoEvents();
 
@@ -674,7 +720,10 @@ namespace DshDesktop
             if (command == null)
             {
                 Note("dsh NOT FOUND");
-                ShowOverlay("找不到 dsh", "未能在 PATH 或全局 npm 目录中找到 dsh。请先安装 DeepSeek Harness，或检查 node 是否可用。");
+                ShowOverlay(_config.IsBundled ? "随包运行时缺失" : "找不到 dsh",
+                    _config.IsBundled
+                        ? "这个安装包缺少 runtime\\ 目录（Node 与 dsh 随包分发）。请重新解压完整的安装包。"
+                        : "未能在 PATH 或全局 npm 目录中找到 dsh。请先安装 DeepSeek Harness，或检查 node 是否可用。");
                 return;
             }
             Note("command " + command);
@@ -722,6 +771,133 @@ namespace DshDesktop
                 Note("webview init FAILED: " + ex.Message);
                 ShowOverlay("无法初始化内嵌浏览器", ex.Message + "\n\n可去掉 --browser 之外的参数重试，或重新安装 WebView2 运行时。");
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Copies the bundled plugin profile into DSH_HOME the first time this install runs.
+        ///
+        /// The profile directory is a pnpm store: entries under <c>node_modules</c> are junctions
+        /// into <c>node_modules\.pnpm</c>. Copying it as plain files would flatten those links and
+        /// break module resolution, so links are recreated as links.
+        /// </summary>
+        private void ProvisionProfile()
+        {
+            try
+            {
+                var source = _config.BundledProfile;
+                var home = _config.DshHome;
+                if (source == null || home == null) return;
+
+                var target = Path.Combine(home, "profiles", "web");
+                if (Directory.Exists(target))
+                {
+                    // Already deployed; leave the user's plugin state (and any plugins they
+                    // installed since) alone.
+                    Note("profile already provisioned at " + target);
+                    return;
+                }
+
+                Directory.CreateDirectory(Path.GetDirectoryName(target));
+                var copied = CopyTree(source, target, 0);
+                Note("provisioned profile: " + copied + " entries -> " + target);
+            }
+            catch (Exception ex)
+            {
+                Note("profile provisioning failed: " + ex.Message);
+            }
+        }
+
+        /// <summary>Recursive copy that preserves junctions and symlinks instead of following them.</summary>
+        private static int CopyTree(string source, string target, int depth)
+        {
+            if (depth > 32) return 0;   // runaway guards: these trees are deep but not infinite
+
+            Directory.CreateDirectory(target);
+            var count = 0;
+
+            foreach (var directory in Directory.GetDirectories(source))
+            {
+                var name = Path.GetFileName(directory);
+                var destination = Path.Combine(target, name);
+                var info = new DirectoryInfo(directory);
+
+                if (info.LinkTarget != null)
+                {
+                    // Recreate the link itself; following it would duplicate the whole pnpm store.
+                    RecreateDirectoryLink(info, destination);
+                    count++;
+                    continue;
+                }
+
+                count += CopyTree(directory, destination, depth + 1);
+            }
+
+            foreach (var file in Directory.GetFiles(source))
+            {
+                var destination = Path.Combine(target, Path.GetFileName(file));
+                var info = new FileInfo(file);
+
+                if (info.LinkTarget != null)
+                {
+                    try
+                    {
+                        if (File.Exists(destination)) File.Delete(destination);
+                        File.CreateSymbolicLink(destination, info.LinkTarget);
+                    }
+                    catch
+                    {
+                        // Fall back to a real copy when link creation is not permitted.
+                        File.Copy(file, destination, true);
+                    }
+                }
+                else
+                {
+                    File.Copy(file, destination, true);
+                }
+                count++;
+            }
+
+            return count;
+        }
+
+        /// <summary>Recreates a directory junction or symlink, falling back to a real copy.</summary>
+        private static void RecreateDirectoryLink(DirectoryInfo info, string destination)
+        {
+            try
+            {
+                var target = info.LinkTarget;
+                if (string.IsNullOrEmpty(target)) return;
+
+                // LinkTarget on a junction can be relative to the link's own folder.
+                if (!Path.IsPathRooted(target))
+                {
+                    target = Path.GetFullPath(Path.Combine(info.Parent?.FullName ?? string.Empty, target));
+                }
+                if (Directory.Exists(destination)) return;
+
+                Directory.CreateSymbolicLink(destination, target);
+            }
+            catch
+            {
+                try
+                {
+                    // Junction creation needs no special privilege, unlike a symlink.
+                    var psi = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe",
+                        Arguments = "/d /s /c mklink /J \"" + destination + "\" \"" + info.LinkTarget + "\"",
+                        UseShellExecute = false,
+                        CreateNoWindow = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                    };
+                    using (var process = System.Diagnostics.Process.Start(psi))
+                    {
+                        process?.WaitForExit(20000);
+                    }
+                }
+                catch { }
             }
         }
 
@@ -796,10 +972,23 @@ namespace DshDesktop
                 }
 
                 var busy = result.Outcome == ServerStartOutcome.PortBusy;
-                Note(busy ? "port busy, retrying" : "start failed");
+                var pluginPortBusy = result.Outcome == ServerStartOutcome.PluginPortBusy;
+                Note(busy ? "web port busy, retrying" : pluginPortBusy ? "plugin port busy" : "start failed");
                 server.Stop();
 
                 if (busy && !_config.StrictPort) continue;
+
+                if (pluginPortBusy)
+                {
+                    // Retrying another web port cannot help: the collision is on a port a plugin
+                    // owns, which usually means another dsh instance is already running.
+                    ShowOverlay("已经有一个 dsh 在运行",
+                        "本机已有一个 dsh 实例占用了插件自己的固定端口（例如 dsh-mobile 的 3443），"
+                        + "所以这个实例起不来。\n\n"
+                        + "请先关掉另一个 dsh（包括其它桌面版窗口、命令行里的 dsh web），再重试。\n\n"
+                        + "展开“运行日志”可以看到具体是哪个插件、哪个端口。");
+                    return;
+                }
 
                 ShowOverlay(
                     busy ? "端口被占用" : "dsh 启动失败",
@@ -1062,7 +1251,9 @@ namespace DshDesktop
 
         private void SetZoom(int percent)
         {
-            _zoomPercent = Math.Max(5, Math.Min(200, percent));
+            // 100% is the honest default; the range allows both "make it bigger" and a slightly
+            // smaller view without ever reaching the old unreadable 20%.
+            _zoomPercent = Math.Max(50, Math.Min(300, percent));
             try
             {
                 if (_webView != null) _webView.ZoomFactor = _zoomPercent / 100.0;

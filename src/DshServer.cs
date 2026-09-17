@@ -26,7 +26,13 @@ namespace DshDesktop
     internal enum ServerStartOutcome
     {
         Ready,
+
+        /// <summary>The web port this launcher chose is taken; trying another one helps.</summary>
         PortBusy,
+
+        /// <summary>A plugin's own fixed port is taken (e.g. dsh-mobile on 3443); another web port will not help.</summary>
+        PluginPortBusy,
+
         PortTimedOut,
         Exited,
         TimedOut,
@@ -143,11 +149,15 @@ namespace DshDesktop
                 {
                     if (process.HasExited)
                     {
-                        var busy = PortBusyLine.IsMatch(Tail);
+                        var outcome = ClassifyExit(port);
                         return new ServerStartResult
                         {
-                            Outcome = busy ? ServerStartOutcome.PortBusy : ServerStartOutcome.Exited,
-                            Detail = "dsh 进程提前退出（代码 " + process.ExitCode + "）。",
+                            Outcome = outcome,
+                            Detail = outcome == ServerStartOutcome.PortBusy
+                                ? "端口 " + port + " 被占用。"
+                                : outcome == ServerStartOutcome.PluginPortBusy
+                                    ? "另一个 dsh 实例正在运行，占用了插件自己的固定端口（如 dsh-mobile 的 3443）。"
+                                    : "dsh 进程提前退出（代码 " + process.ExitCode + "）。",
                         };
                     }
                 }
@@ -158,11 +168,33 @@ namespace DshDesktop
                 Thread.Sleep(120);
             }
 
+            var timedOut = ClassifyExit(port);
             return new ServerStartResult
             {
-                Outcome = PortBusyLine.IsMatch(Tail) ? ServerStartOutcome.PortBusy : ServerStartOutcome.TimedOut,
+                Outcome = timedOut == ServerStartOutcome.PortBusy ? ServerStartOutcome.PortBusy : ServerStartOutcome.TimedOut,
                 Detail = "等待 dsh 启动超时（" + (int)readyTimeout.TotalSeconds + " 秒）。",
             };
+        }
+
+        /// <summary>
+        /// Tells the two kinds of "address already in use" apart.
+        ///
+        /// Only one of them is worth retrying on another port: the web port this launcher chose.
+        /// A plugin can bind a fixed port of its own (dsh-mobile listens on 3443), and when that
+        /// one collides, no other web port will help — the usual cause is that another dsh
+        /// instance is already running on this machine.
+        /// </summary>
+        private ServerStartOutcome ClassifyExit(int port)
+        {
+            var tail = Tail;
+
+            if (tail != null && tail.Contains(":" + port + " ") || (tail != null && tail.Contains(":" + port + "\r")))
+            {
+                return ServerStartOutcome.PortBusy;
+            }
+
+            if (PortBusyLine.IsMatch(tail)) return ServerStartOutcome.PluginPortBusy;
+            return ServerStartOutcome.Exited;
         }
 
         /// <summary>Kills the child process and everything it spawned.</summary>
@@ -267,7 +299,32 @@ namespace DshDesktop
             startInfo.Environment["NO_COLOR"] = "1";
             startInfo.Environment["FORCE_COLOR"] = "0";
             startInfo.Environment["DSH_WEB_LAUNCHER"] = "1";
+
+            // A packaged install keeps its profile (and therefore its plugin list and DSH_HOME)
+            // under the data folder the user chose, so nothing lands on the system drive by default.
+            if (!string.IsNullOrEmpty(PackagedDshHome))
+            {
+                startInfo.Environment["DSH_HOME"] = PackagedDshHome;
+            }
+
             return startInfo;
+        }
+
+        /// <summary>
+        /// Set by the launcher for a packaged install: the DSH_HOME the bundled dsh should use.
+        /// Null for a plain build, where dsh keeps its own default (<c>~/.dsh</c>).
+        /// </summary>
+        public static string PackagedDshHome { get; set; }
+
+        /// <summary>
+        /// Node and the dsh entry point of a packaged install, injected by the launcher when
+        /// <c>runtime\</c> sits next to the executable.
+        /// </summary>
+        public static void UseBundledRuntime(string nodeExe, string vendorDirectory)
+        {
+            _cachedKind = "node";
+            _cachedNode = nodeExe;
+            _cachedEntry = Path.Combine(vendorDirectory, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
         }
 
         private static void Resolve()
@@ -298,6 +355,10 @@ namespace DshDesktop
 
         public static string FindNode()
         {
+            // Packaged install: its own Node, so a machine without Node installed still works.
+            var bundled = Path.Combine(AppContext.BaseDirectory, "runtime", "node", "node.exe");
+            try { if (File.Exists(bundled)) return bundled; } catch { }
+
             var onPath = FindOnPath("node.exe");
             if (onPath != null) return onPath;
 
@@ -310,6 +371,10 @@ namespace DshDesktop
         public static string FindPackageEntry()
         {
             var roots = new List<string>();
+
+            // A packaged install wins: its runtime ships with the app and needs no system Node.
+            var bundled = Path.Combine(AppContext.BaseDirectory, "runtime", "vendor", "node_modules");
+            try { if (Directory.Exists(bundled)) roots.Add(bundled); } catch { }
 
             var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
             if (!string.IsNullOrEmpty(appData))
