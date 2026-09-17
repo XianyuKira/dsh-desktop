@@ -62,3 +62,4 @@ upload-bundle.ps1
 # 验证截图
 ui-*.png
 *.log
+upload-zero-deploy.ps1
