@@ -234,23 +234,54 @@ if (-not $NoRegistry) {
 }
 
 # ---------- 7. 卸载脚本 ----------
+# 卸载只允许删掉"确定属于这次安装"的东西。之前它无条件删除桌面上同名的快捷方式、
+# 以及整个 %LOCALAPPDATA%\DshDesktop，结果卸载一个测试安装时把用户真实安装的快捷方式
+# 和设置一起删了。
 $uninstall = @"
 # 卸载 DeepSeek Harness 桌面版
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 `$install = '$installDir'
 `$data    = '$dataDir'
+`$exe     = Join-Path `$install 'DeepSeekHarness.exe'
+
 Write-Host '即将卸载 DeepSeek Harness 桌面版。' -ForegroundColor Cyan
 Write-Host ''
 Write-Host "  程序目录: `$install"
 Write-Host "  数据目录: `$data"
 Write-Host ''
 `$dropData = Read-Host '是否同时删除数据目录（会话记录、密钥）? (y/N)'
-Get-Process DeepSeekHarness -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
+# 只结束从这个安装目录启动的实例，不碰别处的 dsh
+Get-Process DeepSeekHarness -ErrorAction SilentlyContinue | Where-Object {
+    try { `$_.Path -eq `$exe } catch { `$false }
+} | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
-Remove-Item (Join-Path ([Environment]::GetFolderPath('Desktop')) 'DeepSeek Harness.lnk') -Force -ErrorAction SilentlyContinue
-Remove-Item (Join-Path `$env:APPDATA 'Microsoft\Windows\Start Menu\Programs\DeepSeek Harness.lnk') -Force -ErrorAction SilentlyContinue
+
+# 快捷方式：只有指向本次安装时才删
+`$shell = New-Object -ComObject WScript.Shell
+foreach (`$lnk in @(
+    (Join-Path ([Environment]::GetFolderPath('Desktop')) 'DeepSeek Harness.lnk'),
+    (Join-Path `$env:APPDATA 'Microsoft\Windows\Start Menu\Programs\DeepSeek Harness.lnk')
+)) {
+    if (-not (Test-Path `$lnk)) { continue }
+    `$points = `$null
+    try { `$points = `$shell.CreateShortcut(`$lnk).TargetPath } catch { }
+    if (`$points -and (`$points -ieq `$exe -or `$points.StartsWith(`$install, [StringComparison]::OrdinalIgnoreCase))) {
+        Remove-Item `$lnk -Force -ErrorAction SilentlyContinue
+        Write-Host "  已删除快捷方式: `$lnk"
+    } else {
+        Write-Host "  保留快捷方式（指向别处）: `$lnk"
+    }
+}
+
 Remove-Item 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\DeepSeekHarness' -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item (Join-Path `$env:LOCALAPPDATA 'DshDesktop') -Recurse -Force -ErrorAction SilentlyContinue
+
+# 启动器状态目录：只有本次安装就落在里面时才删，否则会误伤另一个安装
+`$state = Join-Path `$env:LOCALAPPDATA 'DshDesktop'
+if ((Test-Path `$state) -and (`$install.StartsWith(`$state, [StringComparison]::OrdinalIgnoreCase))) {
+    Remove-Item `$state -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 if (`$dropData -match '^[Yy]') { Remove-Item `$data -Recurse -Force -ErrorAction SilentlyContinue }
 Remove-Item `$install -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host ''
