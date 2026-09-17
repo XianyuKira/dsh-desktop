@@ -47,4 +47,18 @@ start-browser.ps1
 浏览器版 dsh web.bat
 # 一次性暂存脚本
 stage12.ps1
+# 一次性测试/验证脚本（含本机绝对路径，不公开）
+diag-*.ps1
+e2e-*.ps1
+final-test.ps1
+iso-test.ps1
+retest.ps1
+visual-*.ps1
+verify-zerodeploy.ps1
+upload-bundle.ps1
+*.e2e-backup
+*.rt-backup
 
+# 验证截图
+ui-*.png
+*.log
