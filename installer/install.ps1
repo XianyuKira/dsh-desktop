@@ -25,7 +25,23 @@ Add-Type -AssemblyName System.Windows.Forms | Out-Null
 Add-Type -AssemblyName System.Drawing | Out-Null
 
 $here = $PSScriptRoot
-$payloadZip = Get-ChildItem $here -Filter 'payload-*.zip' -ErrorAction SilentlyContinue | Select-Object -First 1
+
+# Find the data archive without assuming its exact name. It has been renamed twice
+# (payload-1.3.3.zip, then zero-deploy-payload-1.3.3.zip for the release), and a
+# pattern tied to one spelling silently broke the installer each time.
+$payloadZip = Get-ChildItem $here -Filter '*.zip' -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like '*payload*' } |
+    Sort-Object Length -Descending |
+    Select-Object -First 1
+
+# Fall back to any large zip next to the script, in case it was renamed again.
+if (-not $payloadZip) {
+    $payloadZip = Get-ChildItem $here -Filter '*.zip' -ErrorAction SilentlyContinue |
+        Where-Object { $_.Length -gt 50MB } |
+        Sort-Object Length -Descending |
+        Select-Object -First 1
+}
+
 $payloadDir = Join-Path $here 'payload'
 
 Write-Host ''
